@@ -1,7 +1,7 @@
 {
   "name": "@sockeye44/better-memory-mcp",
-  "version": "0.7.2",
-  "description": "Enhanced MCP server for enabling memory for Claude through a knowledge graph with temporal tracking, confidence scores, and entity management",
+  "version": "0.8.0",
+  "description": "Enhanced MCP server for enabling memory for Claude through a knowledge graph with semantic search, temporal tracking, confidence scores, and entity management",
   "license": "MIT",
   "author": "Anthropic, PBC (https://anthropic.com); Enhanced by https://github.com/sockeye44 and Claude Opus",
   "repository": {
@@ -13,7 +13,10 @@
     "better-memory-mcp": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "semantic_search.py",
+    "requirements.txt",
+    "setup.sh"
   ],
   "scripts": {
     "build": "tsc && shx chmod +x dist/*.js",

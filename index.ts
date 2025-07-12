@@ -9,7 +9,7 @@
  * Original implementation by Anthropic, PBC
  * Enhanced by @sockeye44 and Claude Opus
  * 
- * Version: 0.7.2
+ * Version: 0.8.0
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -21,6 +21,7 @@ import {
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { SemanticSearchBridge, formatSearchResults } from './semantic_search_bridge.js';
 
 // Define memory file path using environment variable with fallback
 const defaultMemoryPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'memory.json');
@@ -403,6 +404,66 @@ class KnowledgeGraphManager {
     };
   }
 
+  async semanticSearch(query: string, k: number = 10, threshold: number = 0.0): Promise<any> {
+    try {
+      // Check if semantic search is available
+      const isAvailable = await semanticSearchBridge.ping();
+      if (!isAvailable) {
+        // Fall back to regular search
+        console.error('Semantic search unavailable, falling back to keyword search');
+        return this.searchNodes(query, k);
+      }
+
+      // Perform semantic search
+      const results = await semanticSearchBridge.search(query, k, threshold);
+      
+      // Group results by entity
+      const entityMap = new Map<string, any>();
+      const entityScores = new Map<string, number>();
+      
+      for (const result of results) {
+        if (!entityMap.has(result.entity_name)) {
+          // Get full entity details
+          const [entity] = await this.getEntityDetails([result.entity_name]);
+          if (entity) {
+            entityMap.set(result.entity_name, entity);
+            entityScores.set(result.entity_name, result.score);
+          }
+        } else {
+          // Update score if this result has a higher score
+          const currentScore = entityScores.get(result.entity_name) || 0;
+          if (result.score > currentScore) {
+            entityScores.set(result.entity_name, result.score);
+          }
+        }
+      }
+      
+      // Sort entities by score
+      const sortedEntities = Array.from(entityMap.values())
+        .sort((a, b) => (entityScores.get(b.name) || 0) - (entityScores.get(a.name) || 0))
+        .slice(0, k);
+      
+      // Get relations between matched entities
+      const entityNames = new Set(sortedEntities.map(e => e.name));
+      const graph = await this.loadGraph();
+      const relations = graph.relations.filter(r => 
+        entityNames.has(r.from) && entityNames.has(r.to)
+      );
+      
+      return {
+        entities: sortedEntities,
+        relations,
+        searchResults: results,
+        searchType: 'semantic'
+      };
+    } catch (error) {
+      console.error('Semantic search error:', error);
+      // Fall back to regular search
+      const result = await this.searchNodes(query, k);
+      return { ...result, searchType: 'keyword' };
+    }
+  }
+
   async openNodes(names: string[]): Promise<KnowledgeGraph> {
     const graph = await this.loadGraph();
     
@@ -569,10 +630,19 @@ class KnowledgeGraphManager {
 
 const knowledgeGraphManager = new KnowledgeGraphManager();
 
+// Initialize semantic search bridge
+const semanticSearchBridge = new SemanticSearchBridge(MEMORY_FILE_PATH);
+
+// Start semantic search service in the background
+semanticSearchBridge.start().catch(error => {
+  console.error('Warning: Semantic search service failed to start:', error.message);
+  console.error('Semantic search will be unavailable, but other features will work normally.');
+});
+
 // The server instance and tools exposed to Claude
 const server = new Server({
   name: "better-memory-mcp",
-  version: "0.7.2",
+  version: "0.8.0",
 }, {
   capabilities: {
     tools: {},
@@ -768,15 +838,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "search_nodes",
-        description: "Search for entities matching a query",
+        description: "Search for entities strictly matching a query",
         inputSchema: {
           type: "object",
           properties: {
             query: { type: "string", description: "Search query" },
             maxObservations: { 
               type: "number", 
-              description: "Max observations per entity (default 3)",
-              default: 3
+              description: "Max observations per entity (default 5)",
+              default: 5
+            }
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "semantic_search",
+        description: "Advanced semantic search using ModernColBERT embeddings (recommended!). Understands meaning and context, not just keywords. Returns entities with highest semantic similarity to the query.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Natural language search query" },
+            k: { 
+              type: "number", 
+              description: "Number of results to return (default 10)",
+              default: 10
+            },
+            threshold: {
+              type: "number",
+              description: "Minimum similarity score (0-1, default 0)",
+              default: 0
             }
           },
           required: ["query"],
@@ -902,6 +993,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
         return { content: [{ type: "text", text: JSON.stringify(searchResult) }] };
       
+      case "semantic_search":
+        const semanticResult = await knowledgeGraphManager.semanticSearch(
+          args.query as string,
+          args.k as number || 10,
+          args.threshold as number || 0
+        );
+        return { content: [{ type: "text", text: JSON.stringify(semanticResult) }] };
+      
       case "open_nodes":
         const openResult = await knowledgeGraphManager.openNodes(args.names as string[]);
         return { content: [{ type: "text", text: JSON.stringify(openResult) }] };
@@ -945,7 +1044,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Better Memory MCP Server v0.7.2 running on stdio");
+  console.error("Better Memory MCP Server v0.8.0 running on stdio");
 }
 
 main().catch((error) => {

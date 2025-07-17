@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/sockeye44-better-memory-mcp-badge.png)](https://mseep.ai/app/sockeye44-better-memory-mcp)
+
 # Better Memory MCP Server
 
 An enhanced knowledge graph memory system for Claude with temporal tracking, confidence scores, entity archiving, semantic search, and advanced management capabilities. This server enables Claude to maintain persistent memory across conversations with improved organization and data quality features.
